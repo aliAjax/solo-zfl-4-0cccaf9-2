@@ -1,6 +1,11 @@
 import { create } from 'zustand';
 import { persist, createJSONStorage } from 'zustand/middleware';
 import type { SmellMemory, Season, SmellType, Emotion } from '../utils/constants';
+import {
+  getPersistFailureCount,
+  guardedStorage,
+  persistFailedSince,
+} from '../utils/persistGuard';
 import { generateId } from '../utils/helpers';
 import { mockMemories } from '../data/mockData';
 
@@ -19,9 +24,10 @@ export interface MemoryInput {
 
 interface MemoryStore {
   memories: SmellMemory[];
-  addMemory: (input: MemoryInput) => void;
-  updateMemory: (id: string, input: MemoryInput) => void;
-  deleteMemory: (id: string) => void;
+  /** 返回 false 表示本地存储写入失败，已回滚，调用方应提示用户 */
+  addMemory: (input: MemoryInput) => boolean;
+  updateMemory: (id: string, input: MemoryInput) => boolean;
+  deleteMemory: (id: string) => boolean;
   initIfEmpty: () => void;
 }
 
@@ -37,19 +43,40 @@ export const useMemoryStore = create<MemoryStore>()(
           created_at: now,
           updated_at: now,
         };
-        set({ memories: [newMem, ...get().memories] });
+        const prev = get().memories;
+        const failBefore = getPersistFailureCount();
+        set({ memories: [newMem, ...prev] });
+        if (persistFailedSince(failBefore)) {
+          set({ memories: prev });
+          return false;
+        }
+        return true;
       },
       updateMemory: (id, input) => {
+        const prev = get().memories;
+        const failBefore = getPersistFailureCount();
         set({
-          memories: get().memories.map((m) =>
+          memories: prev.map((m) =>
             m.id === id
               ? { ...m, ...input, updated_at: new Date().toISOString() }
               : m,
           ),
         });
+        if (persistFailedSince(failBefore)) {
+          set({ memories: prev });
+          return false;
+        }
+        return true;
       },
       deleteMemory: (id) => {
-        set({ memories: get().memories.filter((m) => m.id !== id) });
+        const prev = get().memories;
+        const failBefore = getPersistFailureCount();
+        set({ memories: prev.filter((m) => m.id !== id) });
+        if (persistFailedSince(failBefore)) {
+          set({ memories: prev });
+          return false;
+        }
+        return true;
       },
       initIfEmpty: () => {
         if (get().memories.length === 0) {
@@ -59,7 +86,7 @@ export const useMemoryStore = create<MemoryStore>()(
     }),
     {
       name: 'scent-memory-storage',
-      storage: createJSONStorage(() => localStorage),
+      storage: createJSONStorage(() => guardedStorage),
     },
   ),
 );

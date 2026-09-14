@@ -7,7 +7,8 @@ import type { MemoryInput } from '../store/memoryStore';
 interface Props {
   isOpen: boolean;
   onClose: () => void;
-  onSubmit: (data: MemoryInput) => void;
+  /** 返回 false 表示保存失败，弹窗保持打开、表单内容不丢 */
+  onSubmit: (data: MemoryInput) => boolean;
   editingData: SmellMemory | null;
 }
 
@@ -60,8 +61,8 @@ export default function MemoryModal({ isOpen, onClose, onSubmit, editingData }: 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (!form.location.trim()) return;
-    onSubmit(form);
-    onClose();
+    const ok = onSubmit(form);
+    if (ok) onClose();
   };
 
   if (!isOpen) return null;

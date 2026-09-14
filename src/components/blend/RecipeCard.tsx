@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import {
   FlaskConical,
   History,
@@ -12,33 +12,42 @@ import {
   X,
 } from 'lucide-react';
 import type { BlendRecipe, BlendVersion } from '../../utils/blend';
-import { computeBlend, getCurrentVersion, resolveIngredients } from '../../utils/blend';
+import { computeBlend, getCurrentVersion, resolveSnapshots } from '../../utils/blend';
 import { getSeasonInfo, getEmotionInfo } from '../../utils/constants';
 import { formatDate } from '../../utils/helpers';
 import { useMemoryStore } from '../../store/memoryStore';
 
 interface Props {
   recipe: BlendRecipe;
+  /** 需要向用户揭示的历史版本（例如重复保存命中时），会自动展开历史并高亮 */
+  revealVersionId?: string | null;
   onLoad: (recipe: BlendRecipe, version: BlendVersion) => void;
   onRevert: (recipe: BlendRecipe, version: BlendVersion) => void;
   onRename: (recipeId: string, name: string) => void;
   onDelete: (recipe: BlendRecipe) => void;
 }
 
-export default function RecipeCard({ recipe, onLoad, onRevert, onRename, onDelete }: Props) {
+export default function RecipeCard({ recipe, revealVersionId, onLoad, onRevert, onRename, onDelete }: Props) {
   const memories = useMemoryStore((s) => s.memories);
   const [showHistory, setShowHistory] = useState(false);
   const [renaming, setRenaming] = useState(false);
   const [nameDraft, setNameDraft] = useState(recipe.name);
 
+  // 已保存的版本始终按保存时的快照显示和计算，档案后续编辑不影响历史
   const current = getCurrentVersion(recipe);
-  const resolved = resolveIngredients(current.ingredients, memories);
+  const resolved = resolveSnapshots(current.ingredients, memories);
   const result = computeBlend(resolved);
   const missingCount = resolved.filter((r) => r.missing).length;
   const broken = missingCount > 0;
 
   const season = result ? getSeasonInfo(result.season.value) : null;
   const emotion = result ? getEmotionInfo(result.emotion.value) : null;
+
+  useEffect(() => {
+    if (revealVersionId && recipe.versions.some((v) => v.id === revealVersionId)) {
+      setShowHistory(true);
+    }
+  }, [revealVersionId, recipe.versions]);
 
   const commitRename = () => {
     setRenaming(false);
@@ -170,8 +179,14 @@ export default function RecipeCard({ recipe, onLoad, onRevert, onRename, onDelet
         <div className="mt-3 rounded-2xl bg-paper-100/70 border border-paper-200 divide-y divide-paper-200/80 overflow-hidden animate-expand">
           {[...recipe.versions].reverse().map((v) => {
             const isCurrent = v.id === recipe.currentVersionId;
+            const isRevealed = v.id === revealVersionId;
             return (
-              <div key={v.id} className="flex items-center gap-2 px-3 py-2.5 text-xs">
+              <div
+                key={v.id}
+                className={`flex items-center gap-2 px-3 py-2.5 text-xs transition-colors ${
+                  isRevealed ? 'bg-ochre-100/70 ring-1 ring-inset ring-ochre-300' : ''
+                }`}
+              >
                 <span className={`shrink-0 px-2 py-0.5 rounded-full font-semibold ${
                   isCurrent ? 'bg-ochre-500 text-paper-50' : 'bg-paper-200 text-ink-700'
                 }`}>

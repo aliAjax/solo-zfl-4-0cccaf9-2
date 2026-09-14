@@ -16,7 +16,8 @@ import {
   computeBlend,
   evenSplit,
   getCurrentVersion,
-  resolveIngredients,
+  refreshSnapshots,
+  resolveLive,
   toBlendIngredient,
   validateIngredients,
 } from '../utils/blend';
@@ -49,13 +50,14 @@ export default function Blender() {
   const [name, setName] = useState('');
   const [picker, setPicker] = useState<PickerState>(null);
   const [highlightId, setHighlightId] = useState<string | null>(null);
+  const [reveal, setReveal] = useState<{ recipeId: string; versionId: string } | null>(null);
   const workbenchRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     initIfEmpty();
   }, [initIfEmpty]);
 
-  const resolved = useMemo(() => resolveIngredients(draft, memories), [draft, memories]);
+  const resolved = useMemo(() => resolveLive(draft, memories), [draft, memories]);
   const result = useMemo(() => computeBlend(resolved), [resolved]);
 
   useEffect(() => {
@@ -140,11 +142,17 @@ export default function Blender() {
 
   /* ---------- 配方操作 ---------- */
 
-  const openExisting = (recipe: BlendRecipe) => {
-    const v = getCurrentVersion(recipe);
-    setEditing({ recipeId: recipe.id, name: recipe.name, baseVersion: v.version });
+  const openExisting = (recipe: BlendRecipe, matchedVersion?: BlendVersion) => {
+    const current = getCurrentVersion(recipe);
+    setEditing({ recipeId: recipe.id, name: recipe.name, baseVersion: current.version });
     setSaveAsNew(false);
     setHighlightId(recipe.id);
+    // 命中的是历史版本时，展开该配方的历史并高亮对应版本
+    if (matchedVersion && matchedVersion.id !== recipe.currentVersionId) {
+      setReveal({ recipeId: recipe.id, versionId: matchedVersion.id });
+    } else {
+      setReveal(null);
+    }
   };
 
   const loadVersion = (recipe: BlendRecipe, version: BlendVersion) => {
@@ -161,21 +169,24 @@ export default function Blender() {
       toast.error(`还不能保存：${err}`);
       return;
     }
+    // 保存瞬间刷新快照：档案还在的取当前值，已移除的保留最后已知快照
+    const fresh = refreshSnapshots(draft, memories);
 
     if (editing && !saveAsNew) {
-      const res = saveNewVersion(editing.recipeId, draft);
+      const res = saveNewVersion(editing.recipeId, fresh);
       if (res.status === 'created') {
         const v = getCurrentVersion(res.recipe);
         toast.success(`已保存为「${res.recipe.name}」的 v${v.version}`);
         setEditing({ recipeId: res.recipe.id, name: res.recipe.name, baseVersion: v.version });
         setHighlightId(res.recipe.id);
+        setReveal(null);
       } else if (res.status === 'unchanged') {
         toast.info('与当前版本完全相同，未生成新版本');
       } else if (res.status === 'duplicate') {
-        toast.info(`与配方「${res.recipe.name}」的当前版本相同，已为你打开它`);
-        openExisting(res.recipe);
+        toast.info(`与配方「${res.recipe.name}」的 v${res.version.version} 相同，已为你打开它`);
+        openExisting(res.recipe, res.version);
       } else {
-        toast.error(res.message);
+        toast.error(res.message); // 写盘失败等：不改动任何编辑状态，可修复后重试
       }
       return;
     }
@@ -184,16 +195,17 @@ export default function Blender() {
       toast.error('先给配方起个名字吧');
       return;
     }
-    const res = saveNewRecipe(name, draft);
+    const res = saveNewRecipe(name, fresh);
     if (res.status === 'created') {
       toast.success(`配方「${res.recipe.name}」已封存`);
       setEditing({ recipeId: res.recipe.id, name: res.recipe.name, baseVersion: 1 });
       setSaveAsNew(false);
       setName('');
       setHighlightId(res.recipe.id);
+      setReveal(null);
     } else if (res.status === 'duplicate') {
-      toast.info(`已存在相同配方「${res.recipe.name}」，已为你打开`);
-      openExisting(res.recipe);
+      toast.info(`已存在相同配方「${res.recipe.name}」（v${res.version.version}），已为你打开`);
+      openExisting(res.recipe, res.version);
     } else if (res.status === 'error') {
       toast.error(res.message);
     }
@@ -205,6 +217,7 @@ export default function Blender() {
       const v = getCurrentVersion(res.recipe);
       toast.success(`已按 v${version.version} 的内容生成新版本 v${v.version}，历史已保留`);
       setHighlightId(recipe.id);
+      setReveal(null);
       if (editing?.recipeId === recipe.id) {
         setEditing({ recipeId: recipe.id, name: res.recipe.name, baseVersion: v.version });
         setDraft(cloneIngredients(v.ingredients));
@@ -223,7 +236,11 @@ export default function Blender() {
       toast.error('名字不能为空');
       return;
     }
-    renameRecipe(recipeId, newName);
+    const err = renameRecipe(recipeId, newName);
+    if (err) {
+      toast.error(err);
+      return;
+    }
     if (editing?.recipeId === recipeId) {
       setEditing({ ...editing, name: newName.trim() });
     }
@@ -235,7 +252,11 @@ export default function Blender() {
       `确认删除配方「${recipe.name}」吗？全部 ${recipe.versions.length} 个版本的历史也会一并删除。`,
     );
     if (!ok) return;
-    deleteRecipe(recipe.id);
+    const err = deleteRecipe(recipe.id);
+    if (err) {
+      toast.error(err);
+      return;
+    }
     if (editing?.recipeId === recipe.id) setEditing(null);
     toast.info('配方已删除');
   };
@@ -348,6 +369,7 @@ export default function Blender() {
                 <RecipeCard
                   key={r.id}
                   recipe={r}
+                  revealVersionId={reveal?.recipeId === r.id ? reveal.versionId : null}
                   onLoad={loadVersion}
                   onRevert={handleRevert}
                   onRename={handleRename}

@@ -4,7 +4,7 @@ import {
   MAX_INGREDIENTS,
   MIN_INGREDIENTS,
   RATIO_TOTAL,
-  resolveIngredients,
+  resolveLive,
   sumRatios,
   validateIngredients,
 } from '../../utils/blend';
@@ -34,7 +34,7 @@ export default function Workbench({
   onClear,
 }: Props) {
   const memories = useMemoryStore((s) => s.memories);
-  const resolved = resolveIngredients(draft, memories);
+  const resolved = resolveLive(draft, memories);
   const total = sumRatios(draft);
   const error = validateIngredients(draft);
   const missingCount = resolved.filter((r) => r.missing).length;

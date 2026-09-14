@@ -21,7 +21,8 @@ export const useToastStore = create<ToastStore>()((set, get) => ({
   push: (type, text) => {
     const id = seq++;
     set({ toasts: [...get().toasts, { id, type, text }] });
-    setTimeout(() => get().dismiss(id), 3600);
+    // 错误提示停留更久，确保用户看得到
+    setTimeout(() => get().dismiss(id), type === 'error' ? 6000 : 3600);
   },
   dismiss: (id) => set({ toasts: get().toasts.filter((t) => t.id !== id) }),
 }));

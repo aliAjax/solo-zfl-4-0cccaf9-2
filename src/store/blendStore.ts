@@ -1,31 +1,32 @@
 import { create } from 'zustand';
 import { persist, createJSONStorage } from 'zustand/middleware';
 import type { BlendIngredient, BlendRecipe, BlendVersion } from '../utils/blend';
-import { fingerprint, getCurrentVersion } from '../utils/blend';
+import { findDuplicateVersion, fingerprint, getCurrentVersion } from '../utils/blend';
+import {
+  PERSIST_ERROR_MESSAGE,
+  getPersistFailureCount,
+  guardedStorage,
+  persistFailedSince,
+} from '../utils/persistGuard';
 import { generateId } from '../utils/helpers';
 
 export type SaveResult =
   | { status: 'created'; recipe: BlendRecipe }
-  | { status: 'duplicate'; recipe: BlendRecipe }
+  | { status: 'duplicate'; recipe: BlendRecipe; version: BlendVersion }
   | { status: 'unchanged'; recipe: BlendRecipe }
   | { status: 'error'; message: string };
 
 interface BlendStore {
   recipes: BlendRecipe[];
-  /** 新建配方；若已有相同原料和比例的配方，返回 duplicate 并指向它 */
+  /** 新建配方；若任意配方的任意历史版本有相同原料和比例，返回 duplicate 并指向它 */
   saveNewRecipe: (name: string, ingredients: BlendIngredient[]) => SaveResult;
   /** 给已有配方追加新版本（配方本体不可改写）；与当前版本相同则不新增 */
   saveNewVersion: (recipeId: string, ingredients: BlendIngredient[], label?: string) => SaveResult;
   /** 回退到历史版本：以旧内容追加一个新版本，历史不丢 */
   revertToVersion: (recipeId: string, versionId: string) => SaveResult;
-  renameRecipe: (recipeId: string, name: string) => void;
-  deleteRecipe: (recipeId: string) => void;
-}
-
-function findByFingerprint(recipes: BlendRecipe[], fp: string, excludeId?: string) {
-  return recipes.find(
-    (r) => r.id !== excludeId && fingerprint(getCurrentVersion(r).ingredients) === fp,
-  );
+  /** 返回 null 表示成功，否则为失败原因（写盘失败会回滚） */
+  renameRecipe: (recipeId: string, name: string) => string | null;
+  deleteRecipe: (recipeId: string) => string | null;
 }
 
 export const useBlendStore = create<BlendStore>()(
@@ -34,9 +35,8 @@ export const useBlendStore = create<BlendStore>()(
       recipes: [],
 
       saveNewRecipe: (name, ingredients) => {
-        const fp = fingerprint(ingredients);
-        const dup = findByFingerprint(get().recipes, fp);
-        if (dup) return { status: 'duplicate', recipe: dup };
+        const dup = findDuplicateVersion(get().recipes, ingredients);
+        if (dup) return { status: 'duplicate', recipe: dup.recipe, version: dup.version };
 
         const now = new Date().toISOString();
         const v1: BlendVersion = { id: generateId(), version: 1, ingredients, created_at: now };
@@ -48,7 +48,13 @@ export const useBlendStore = create<BlendStore>()(
           created_at: now,
           updated_at: now,
         };
-        set({ recipes: [recipe, ...get().recipes] });
+        const prev = get().recipes;
+        const failBefore = getPersistFailureCount();
+        set({ recipes: [recipe, ...prev] });
+        if (persistFailedSince(failBefore)) {
+          set({ recipes: prev }); // 写盘失败：回滚，不假装保存完成
+          return { status: 'error', message: PERSIST_ERROR_MESSAGE };
+        }
         return { status: 'created', recipe };
       },
 
@@ -56,12 +62,11 @@ export const useBlendStore = create<BlendStore>()(
         const recipe = get().recipes.find((r) => r.id === recipeId);
         if (!recipe) return { status: 'error', message: '配方不存在或已被删除' };
 
-        const fp = fingerprint(ingredients);
-        if (fp === fingerprint(getCurrentVersion(recipe).ingredients)) {
+        if (fingerprint(ingredients) === fingerprint(getCurrentVersion(recipe).ingredients)) {
           return { status: 'unchanged', recipe };
         }
-        const dup = findByFingerprint(get().recipes, fp, recipeId);
-        if (dup) return { status: 'duplicate', recipe: dup };
+        const dup = findDuplicateVersion(get().recipes, ingredients, recipeId);
+        if (dup) return { status: 'duplicate', recipe: dup.recipe, version: dup.version };
 
         const now = new Date().toISOString();
         const next: BlendVersion = {
@@ -77,7 +82,13 @@ export const useBlendStore = create<BlendStore>()(
           currentVersionId: next.id,
           updated_at: now,
         };
-        set({ recipes: get().recipes.map((r) => (r.id === recipeId ? updated : r)) });
+        const prev = get().recipes;
+        const failBefore = getPersistFailureCount();
+        set({ recipes: prev.map((r) => (r.id === recipeId ? updated : r)) });
+        if (persistFailedSince(failBefore)) {
+          set({ recipes: prev });
+          return { status: 'error', message: PERSIST_ERROR_MESSAGE };
+        }
         return { status: 'created', recipe: updated };
       },
 
@@ -105,27 +116,47 @@ export const useBlendStore = create<BlendStore>()(
           currentVersionId: next.id,
           updated_at: now,
         };
-        set({ recipes: get().recipes.map((r) => (r.id === recipeId ? updated : r)) });
+        const prev = get().recipes;
+        const failBefore = getPersistFailureCount();
+        set({ recipes: prev.map((r) => (r.id === recipeId ? updated : r)) });
+        if (persistFailedSince(failBefore)) {
+          set({ recipes: prev });
+          return { status: 'error', message: PERSIST_ERROR_MESSAGE };
+        }
         return { status: 'created', recipe: updated };
       },
 
       renameRecipe: (recipeId, name) => {
         const trimmed = name.trim();
-        if (!trimmed) return;
+        if (!trimmed) return '名字不能为空';
+        const prev = get().recipes;
+        const failBefore = getPersistFailureCount();
         set({
-          recipes: get().recipes.map((r) =>
+          recipes: prev.map((r) =>
             r.id === recipeId ? { ...r, name: trimmed, updated_at: new Date().toISOString() } : r,
           ),
         });
+        if (persistFailedSince(failBefore)) {
+          set({ recipes: prev });
+          return PERSIST_ERROR_MESSAGE;
+        }
+        return null;
       },
 
       deleteRecipe: (recipeId) => {
-        set({ recipes: get().recipes.filter((r) => r.id !== recipeId) });
+        const prev = get().recipes;
+        const failBefore = getPersistFailureCount();
+        set({ recipes: prev.filter((r) => r.id !== recipeId) });
+        if (persistFailedSince(failBefore)) {
+          set({ recipes: prev });
+          return PERSIST_ERROR_MESSAGE;
+        }
+        return null;
       },
     }),
     {
       name: 'scent-blend-storage',
-      storage: createJSONStorage(() => localStorage),
+      storage: createJSONStorage(() => guardedStorage),
     },
   ),
 );

@@ -7,6 +7,7 @@ import MemoryModal from '../components/MemoryModal';
 import { useMemoryStore } from '../store/memoryStore';
 import { useBlendStore, recipesUsingMemory } from '../store/blendStore';
 import { toast } from '../store/toastStore';
+import { PERSIST_ERROR_MESSAGE } from '../utils/persistGuard';
 import type { Filters } from '../utils/helpers';
 import { filterMemories } from '../utils/helpers';
 import type { SmellMemory } from '../utils/constants';
@@ -43,12 +44,13 @@ export default function Home() {
   const openAddModal = () => { setEditing(null); setModalOpen(true); };
   const openEditModal = (m: SmellMemory) => { setEditing(m); setModalOpen(true); };
 
-  const handleSubmit = (data: MemoryInput) => {
-    if (editing) {
-      updateMemory(editing.id, data);
-    } else {
-      addMemory(data);
+  const handleSubmit = (data: MemoryInput): boolean => {
+    const ok = editing ? updateMemory(editing.id, data) : addMemory(data);
+    if (!ok) {
+      toast.error(PERSIST_ERROR_MESSAGE);
+      return false; // 保存失败：弹窗保持打开，表单内容不丢
     }
+    return true;
   };
 
   const handleDelete = (id: string) => {
@@ -56,7 +58,11 @@ export default function Home() {
     const msg = `确认删除「${target?.location ?? '这段记忆'}」吗？`;
     if (window.confirm(msg)) {
       const affected = recipesUsingMemory(useBlendStore.getState().recipes, id).length;
-      deleteMemory(id);
+      const ok = deleteMemory(id);
+      if (!ok) {
+        toast.error(PERSIST_ERROR_MESSAGE);
+        return;
+      }
       if (expandedId === id) setExpandedId(null);
       if (affected > 0) {
         toast.info(`该档案被 ${affected} 个配方使用，已在调香台标记为「待修复」`);

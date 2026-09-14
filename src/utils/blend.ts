@@ -107,8 +107,8 @@ export interface ResolvedIngredient extends IngredientSnapshot {
   missing: boolean;
 }
 
-/** 档案还在就用实时数据，被移除就用保存时的快照 */
-export function resolveIngredients(
+/** 工作台草稿：档案还在就用实时数据（所见即所调），被移除则回退到快照 */
+export function resolveLive(
   ingredients: BlendIngredient[],
   memories: SmellMemory[],
 ): ResolvedIngredient[] {
@@ -129,6 +129,53 @@ export function resolveIngredients(
     }
     return { memoryId: ing.memoryId, ratio: ing.ratio, missing: true, ...ing.snapshot };
   });
+}
+
+/**
+ * 已保存的版本：始终按保存时的快照显示和计算。
+ * 原始档案之后的编辑不影响历史，只有「档案被移除」这一事实需要实时判断。
+ */
+export function resolveSnapshots(
+  ingredients: BlendIngredient[],
+  memories: SmellMemory[],
+): ResolvedIngredient[] {
+  return ingredients.map((ing) => ({
+    memoryId: ing.memoryId,
+    ratio: ing.ratio,
+    missing: !memories.some((m) => m.id === ing.memoryId),
+    ...ing.snapshot,
+  }));
+}
+
+/** 保存瞬间刷新快照：档案还在的取当前值，已移除的保留最后已知快照——所见即所存 */
+export function refreshSnapshots(
+  ingredients: BlendIngredient[],
+  memories: SmellMemory[],
+): BlendIngredient[] {
+  return ingredients.map((ing) => {
+    const mem = memories.find((m) => m.id === ing.memoryId);
+    return mem ? toBlendIngredient(mem, ing.ratio) : ing;
+  });
+}
+
+/** 在全部配方的全部历史版本中查找相同原料和比例（当前版本优先命中） */
+export function findDuplicateVersion(
+  recipes: BlendRecipe[],
+  ingredients: BlendIngredient[],
+  excludeRecipeId?: string,
+): { recipe: BlendRecipe; version: BlendVersion } | null {
+  const fp = fingerprint(ingredients);
+  const candidates = recipes.filter((r) => r.id !== excludeRecipeId);
+  for (const recipe of candidates) {
+    const current = getCurrentVersion(recipe);
+    if (fingerprint(current.ingredients) === fp) return { recipe, version: current };
+  }
+  for (const recipe of candidates) {
+    for (const version of recipe.versions) {
+      if (fingerprint(version.ingredients) === fp) return { recipe, version };
+    }
+  }
+  return null;
 }
 
 export interface BlendResult {
