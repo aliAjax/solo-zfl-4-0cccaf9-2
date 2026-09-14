@@ -1,4 +1,5 @@
 import { Plus } from 'lucide-react';
+import NavTabs from './NavTabs';
 
 interface Props {
   onAdd: () => void;
@@ -44,6 +45,7 @@ export default function Header({ onAdd, memoryCount }: Props) {
           </button>
         </div>
         <div className="mt-8 h-px w-full" style={{ background: 'linear-gradient(90deg, transparent 0%, #CBB993 20%, #CBB993 80%, transparent 100%)' }} />
+        <NavTabs />
       </div>
     </header>
   );

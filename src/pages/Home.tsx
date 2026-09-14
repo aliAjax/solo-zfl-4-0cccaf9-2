@@ -5,6 +5,8 @@ import VisualizationPanel from '../components/VisualizationPanel';
 import MemoryCard from '../components/MemoryCard';
 import MemoryModal from '../components/MemoryModal';
 import { useMemoryStore } from '../store/memoryStore';
+import { useBlendStore, recipesUsingMemory } from '../store/blendStore';
+import { toast } from '../store/toastStore';
 import type { Filters } from '../utils/helpers';
 import { filterMemories } from '../utils/helpers';
 import type { SmellMemory } from '../utils/constants';
@@ -53,8 +55,14 @@ export default function Home() {
     const target = memories.find((m) => m.id === id);
     const msg = `确认删除「${target?.location ?? '这段记忆'}」吗？`;
     if (window.confirm(msg)) {
+      const affected = recipesUsingMemory(useBlendStore.getState().recipes, id).length;
       deleteMemory(id);
       if (expandedId === id) setExpandedId(null);
+      if (affected > 0) {
+        toast.info(`该档案被 ${affected} 个配方使用，已在调香台标记为「待修复」`);
+      } else {
+        toast.info('这段气味已从档案中移除');
+      }
     }
   };
 

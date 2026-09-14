@@ -69,6 +69,10 @@ export default {
         'card': '0 4px 16px rgba(92, 58, 29, 0.10), 1px 2px 0 rgba(92, 58, 29, 0.04)',
       },
       keyframes: {
+        fadeIn: {
+          '0%': { opacity: '0' },
+          '100%': { opacity: '1' },
+        },
         fadeInUp: {
           '0%': { opacity: '0', transform: 'translateY(12px)' },
           '100%': { opacity: '1', transform: 'translateY(0)' },
@@ -83,6 +87,7 @@ export default {
         }
       },
       animation: {
+        fadeIn: 'fadeIn 0.3s ease-out forwards',
         fadeInUp: 'fadeInUp 0.5s ease-out forwards',
         slideDown: 'slideDown 0.35s cubic-bezier(0.16, 1, 0.3, 1) forwards',
         expand: 'expand 0.4s ease-out forwards',
